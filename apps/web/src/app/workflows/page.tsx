@@ -90,6 +90,12 @@ export default function WorkflowsPage() {
           )}
         </div>
         <div className="flex items-center gap-4">
+          <Link href="/workflows" className="text-slate-300 hover:text-white text-sm transition-colors font-medium">
+            Workflows
+          </Link>
+          <Link href="/credentials" className="text-slate-400 hover:text-white text-sm transition-colors">
+            Credentials
+          </Link>
           <span className="text-slate-400 text-sm">{user?.email}</span>
           <button
             onClick={() => { clearAuth(); router.push('/auth/login'); }}

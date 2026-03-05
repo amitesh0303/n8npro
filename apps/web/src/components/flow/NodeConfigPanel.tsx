@@ -118,12 +118,55 @@ export function NodeConfigPanel({ node, onUpdate, onClose }: NodeConfigPanelProp
         );
 
       case 'manual_trigger':
-      case 'cron_trigger':
-      case 'webhook_trigger':
       case 'output':
         return (
           <p className="text-slate-400 text-xs">No configuration required for this node.</p>
         );
+
+      case 'cron_trigger':
+        return (
+          <>
+            <Field
+              label="Cron Expression"
+              value={String(config['expression'] ?? '* * * * *')}
+              onChange={(v) => setField('expression', v)}
+              placeholder="*/5 * * * *"
+            />
+            <div className="bg-slate-900 rounded p-2 text-xs text-slate-400 space-y-0.5">
+              <div className="text-slate-300 font-medium mb-1">Format: minute hour dom month dow</div>
+              <div><code className="text-green-400">* * * * *</code> – every minute</div>
+              <div><code className="text-green-400">*/5 * * * *</code> – every 5 minutes</div>
+              <div><code className="text-green-400">0 9 * * 1-5</code> – 09:00 on weekdays</div>
+              <div><code className="text-green-400">0 0 * * *</code> – midnight daily</div>
+            </div>
+          </>
+        );
+
+      case 'webhook_trigger': {
+        const apiBase = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+        const webhookUrl = `${apiBase}/webhooks/${node.workflowId}`;
+        return (
+          <div className="space-y-3">
+            <div>
+              <label className="block text-slate-300 text-xs font-medium mb-1">Webhook URL</label>
+              <div className="bg-slate-900 rounded p-2 text-xs break-all">
+                <span className="text-blue-400 font-medium">POST </span>
+                <span className="text-green-300">{webhookUrl}</span>
+              </div>
+            </div>
+            <p className="text-slate-400 text-xs">
+              Activate the workflow and send a <code className="text-blue-300">POST</code> request to the URL
+              above. The request body, query parameters, and headers will be available as the trigger payload.
+            </p>
+            <div className="bg-slate-900 rounded p-2 text-xs text-slate-400">
+              <div className="text-slate-300 font-medium mb-1">Example (curl):</div>
+              <code className="text-green-300 block whitespace-pre-wrap">{`curl -X POST ${webhookUrl} \\
+  -H "Content-Type: application/json" \\
+  -d '{"key": "value"}'`}</code>
+            </div>
+          </div>
+        );
+      }
 
       default:
         return (

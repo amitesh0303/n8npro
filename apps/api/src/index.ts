@@ -5,7 +5,9 @@ import authRouter from './routes/auth.js';
 import workflowsRouter from './routes/workflows.js';
 import executionsRouter from './routes/executions.js';
 import credentialsRouter from './routes/credentials.js';
+import webhooksRouter from './routes/webhooks.js';
 import { registerAll } from './services/registry.js';
+import { startCronScheduler } from './services/cronScheduler.js';
 
 // Register node handlers and LLM adapters
 registerAll();
@@ -25,6 +27,7 @@ app.use('/auth', authRouter);
 app.use('/workflows', workflowsRouter);
 app.use('/executions', executionsRouter);
 app.use('/credentials', credentialsRouter);
+app.use('/webhooks', webhooksRouter);
 
 // 404 handler
 app.use((_req, res) => {
@@ -47,6 +50,7 @@ app.use(
 const PORT = parseInt(process.env.PORT ?? '3001', 10);
 app.listen(PORT, () => {
   console.log(`[api] Listening on http://localhost:${PORT}`);
+  startCronScheduler();
 });
 
 export default app;
