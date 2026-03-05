@@ -1,0 +1,123 @@
+// This is your Prisma schema file
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String      @id @default(uuid())
+  email        String      @unique
+  passwordHash String
+  name         String?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  workspaces   WorkspaceMember[]
+  ownedWorkspaces Workspace[]
+}
+
+model Workspace {
+  id          String      @id @default(uuid())
+  name        String
+  ownerId     String
+  owner       User        @relation(fields: [ownerId], references: [id])
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  members     WorkspaceMember[]
+  workflows   Workflow[]
+  credentials Credential[]
+}
+
+model WorkspaceMember {
+  id          String    @id @default(uuid())
+  workspaceId String
+  userId      String
+  role        String    @default("member") // owner | admin | member
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+
+  @@unique([workspaceId, userId])
+}
+
+model Workflow {
+  id          String      @id @default(uuid())
+  workspaceId String
+  workspace   Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  active      Boolean     @default(false)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  nodes       Node[]
+  edges       Edge[]
+  executions  Execution[]
+}
+
+model Node {
+  id         String   @id @default(uuid())
+  workflowId String
+  workflow   Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  kind       String   // NodeKind enum value
+  label      String
+  positionX  Float    @default(0)
+  positionY  Float    @default(0)
+  config     String   @default("{}") // JSON string
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model Edge {
+  id           String   @id @default(uuid())
+  workflowId   String
+  workflow     Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  sourceNodeId String
+  targetNodeId String
+  sourceHandle String?
+  targetHandle String?
+  createdAt    DateTime @default(now())
+}
+
+model Execution {
+  id             String          @id @default(uuid())
+  workflowId     String
+  workflow       Workflow        @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  status         String          @default("queued") // ExecutionStatus
+  startedAt      DateTime?
+  finishedAt     DateTime?
+  error          String?
+  triggerPayload String?         // JSON string
+  createdAt      DateTime        @default(now())
+  steps          ExecutionStep[]
+}
+
+model ExecutionStep {
+  id          String    @id @default(uuid())
+  executionId String
+  execution   Execution @relation(fields: [executionId], references: [id], onDelete: Cascade)
+  nodeId      String
+  nodeKind    String
+  status      String    @default("pending") // StepStatus
+  startedAt   DateTime?
+  finishedAt  DateTime?
+  input       String?   // JSON string
+  output      String?   // JSON string
+  error       String?
+  durationMs  Int?
+  createdAt   DateTime  @default(now())
+}
+
+model Credential {
+  id          String    @id @default(uuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name        String
+  type        String    // e.g. 'gemini', 'openai', 'http_basic'
+  data        String    @default("{}") // JSON string (encrypted in production)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
