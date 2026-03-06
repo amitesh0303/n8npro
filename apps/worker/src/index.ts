@@ -5,10 +5,11 @@
  * This worker is the V1+ design: it consumes jobs from a BullMQ queue backed by Redis.
  *
  * To use: set REDIS_URL env var and ensure the API enqueues jobs via BullMQ.
+ * The DATABASE_URL env var must point to the same database as the API.
  */
 
 import 'dotenv/config';
-import { Worker, Queue } from 'bullmq';
+import { Worker } from 'bullmq';
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
@@ -198,35 +199,132 @@ async function executeNode(
   node: GraphNode,
   inputs: Record<string, unknown>
 ): Promise<unknown> {
-  // Simplified inline execution - mirrors the API executor
+  const firstInput = () => {
+    const vals = Object.values(inputs);
+    return vals.length > 0 ? vals[0] : null;
+  };
+
   switch (node.kind) {
-    case 'output':
     case 'manual_trigger':
-      return Object.values(inputs)[0] ?? null;
+    case 'cron_trigger':
+    case 'webhook_trigger':
+      return firstInput() ?? {};
+
+    case 'output': {
+      const vals = Object.values(inputs);
+      return vals.length === 1 ? vals[0] : vals;
+    }
 
     case 'transform': {
       const { expression } = node.config as { expression?: string };
       if (!expression) throw new Error('Transform node missing expression');
-      const input = Object.values(inputs)[0];
+      const input = firstInput();
       // eslint-disable-next-line no-new-func
       const fn = new Function('input', `"use strict"; return (${expression})(input)`);
       return fn(input) as unknown;
     }
 
+    case 'filter': {
+      const { condition } = node.config as { condition?: string };
+      if (!condition) throw new Error('Filter node missing condition');
+      const input = firstInput();
+      if (!Array.isArray(input)) throw new Error('Filter node requires an array input');
+      // eslint-disable-next-line no-new-func
+      const fn = new Function('item', `"use strict"; return (${condition})(item)`);
+      return (input as unknown[]).filter((item) => fn(item) as boolean);
+    }
+
+    case 'aggregate': {
+      const { operation = 'count', field, separator = ', ' } = node.config as {
+        operation?: string;
+        field?: string;
+        separator?: string;
+      };
+      const input = firstInput();
+      if (!Array.isArray(input)) throw new Error('Aggregate node requires an array input');
+      const arr = input as unknown[];
+
+      const numericValues = field
+        ? arr.map((item) => {
+            if (typeof item === 'object' && item !== null) {
+              const v = (item as Record<string, unknown>)[field];
+              return typeof v === 'number' ? v : parseFloat(String(v));
+            }
+            return parseFloat(String(item));
+          })
+        : arr.map((item) => (typeof item === 'number' ? item : parseFloat(String(item))));
+
+      switch (operation) {
+        case 'count': return arr.length;
+        case 'sum': return numericValues.reduce((a, b) => a + b, 0);
+        case 'average': return arr.length === 0 ? 0 : numericValues.reduce((a, b) => a + b, 0) / arr.length;
+        case 'min': return arr.length === 0 ? null : Math.min(...numericValues);
+        case 'max': return arr.length === 0 ? null : Math.max(...numericValues);
+        case 'join': return arr.map(String).join(separator);
+        case 'first': return arr[0] ?? null;
+        case 'last': return arr[arr.length - 1] ?? null;
+        default: return null;
+      }
+    }
+
+    case 'code': {
+      const { code } = node.config as { code?: string };
+      if (!code) throw new Error('Code node requires a "code" config field');
+      // eslint-disable-next-line no-new-func
+      const fn = new Function('inputs', `"use strict"; ${code}`);
+      return fn(inputs) as unknown;
+    }
+
     case 'http_request': {
-      const { url, method = 'GET', headers = {}, body } = node.config as {
+      const {
+        url,
+        method = 'GET',
+        headers = {},
+        body,
+        responseType = 'json',
+        timeoutMs = 10000,
+      } = node.config as {
         url?: string;
         method?: string;
         headers?: Record<string, string>;
         body?: unknown;
+        responseType?: string;
+        timeoutMs?: number;
       };
-      if (!url) throw new Error('HTTP node missing url');
-      const resp = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json', ...headers },
-        body: body ? JSON.stringify(body) : undefined,
-      });
-      return { status: resp.status, data: await resp.json().catch(() => resp.text()) };
+      if (!url) throw new Error('HTTP Request node requires a "url" config field');
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const fetchOptions: RequestInit = {
+          method,
+          headers: { 'Content-Type': 'application/json', ...headers },
+          signal: controller.signal,
+        };
+        if (body !== undefined && method !== 'GET' && method !== 'DELETE') {
+          fetchOptions.body = typeof body === 'string' ? body : JSON.stringify(body);
+        }
+        const response = await fetch(url, fetchOptions);
+        let data: unknown;
+        if (responseType === 'json') {
+          try { data = await response.json(); } catch { data = await response.text(); }
+        } else {
+          data = await response.text();
+        }
+        return {
+          status: response.status,
+          headers: Object.fromEntries(response.headers.entries()),
+          data,
+          ok: response.ok,
+        };
+      } catch (err) {
+        if (controller.signal.aborted) {
+          throw new Error(`HTTP request timed out after ${timeoutMs}ms: ${url}`);
+        }
+        throw err;
+      } finally {
+        clearTimeout(timer);
+      }
     }
 
     default:
